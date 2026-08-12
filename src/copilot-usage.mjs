@@ -4,7 +4,9 @@ import {
   aggregateCreditUsage,
   aggregateUserMetrics,
   attachUserCreditUsage,
+  computeIncludedCreditsPool,
   normalizeAiCreditBudgets,
+  percentage,
 } from "./aggregate.mjs";
 import { GitHubApiError, GitHubClient } from "./github-api.mjs";
 
@@ -153,6 +155,8 @@ export async function buildReport(options, client) {
   const [usage, budgets, copilotDetails, userReport] = await Promise.all(requests);
   const credits = aggregateCreditUsage(usage?.usageItems);
   const aiCreditBudgets = normalizeAiCreditBudgets(budgets);
+  const period = usage?.timePeriod ?? { year: options.year, month: options.month };
+  const pool = computeIncludedCreditsPool(copilotDetails?.seats, period);
   const aggregatedUsers = userReport
     ? aggregateUserMetrics(userReport.records)
     : null;
@@ -181,10 +185,7 @@ export async function buildReport(options, client) {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     scope: { type: "enterprise", slug: options.enterprise },
-    period: usage?.timePeriod ?? {
-      year: options.year,
-      month: options.month,
-    },
+    period,
     credits: {
       grossUsed: credits.grossUsed,
       discounted: credits.discounted,
@@ -193,15 +194,20 @@ export async function buildReport(options, client) {
       netChargeUsd: credits.netChargeUsd,
     },
     limits: {
-      includedCredits: null,
-      effectiveLimit: null,
-      percentUsed: null,
+      includedCredits: pool.includedCredits,
+      effectiveLimit: pool.includedCredits,
+      percentUsed: percentage(credits.grossUsed, pool.includedCredits),
+      includedCreditsBasis: {
+        ratesPerSeatPerMonth: pool.ratesPerSeatPerMonth,
+        promoActive: pool.promoActive,
+        warnings: pool.warnings,
+      },
       aiCreditBudgets,
     },
     copilot: {
       planType: null,
       totalSeats: copilotDetails?.totalSeats ?? null,
-      seatBreakdown: null,
+      seatBreakdown: pool.seatBreakdown,
       assignmentRecordCount: copilotDetails?.seats?.length ?? null,
     },
     models: credits.models,

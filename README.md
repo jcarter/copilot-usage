@@ -68,9 +68,32 @@ teams. `copilot.totalSeats` is GitHub's unique billed-seat count, while
   succeed. `userMetrics.summary.billingBreakdown` reports request completeness,
   attributed gross credits, and the residual `unattributedGrossCredits` versus
   the scope-level billing total so partial coverage cannot silently undercount.
-- Included pool and effective limit remain `null` unless a reliable billing-
-  entity-level source is added. Copilot seats are not treated as the
-  enterprise's shared credit pool.
+- `limits.includedCredits` and `limits.effectiveLimit` are **computed, not
+  fetched** — no GitHub API exposes the enterprise's total included AI-credit
+  pool. GitHub grants a fixed monthly credit allotment per licensed seat,
+  keyed by `plan_type` (`business`/`enterprise`), pooled at the enterprise
+  level; this matches that dashboard figure by multiplying each plan's unique
+  seat count (deduplicated by assignee the same way as `copilot.totalSeats`,
+  see above) by a hardcoded per-plan rate. Those rates live in
+  `src/aggregate.mjs` (`STANDARD_CREDITS_PER_SEAT` / `PROMO_CREDITS_PER_SEAT`)
+  and mirror GitHub's currently published pricing, including a temporary
+  promotional boost for existing customers from 2026-06-01 through 2026-09-01.
+  **They will silently go stale** if GitHub changes plan pricing or the promo
+  window closes without a matching code update — `limits.includedCreditsBasis`
+  reports which rate table and promo state were used for the report's period,
+  plus any warnings (seats with no assignee, an unrecognized `plan_type`, or
+  conflicting `plan_type` values for the same user across duplicate seat
+  records) so a wrong total is visible rather than silent.
+- `limits.percentUsed` is `credits.grossUsed` against `limits.includedCredits`,
+  matching the dashboard's usage progress bar.
+- `limits.effectiveLimit` currently mirrors `limits.includedCredits`. It does
+  not subtract any admin-configured spending budget that could lower the real
+  ceiling further — `limits.aiCreditBudgets` lists those separately (note
+  their `scope`: a budget scoped below "enterprise" caps only part of the
+  pool) for manual cross-referencing.
+- `copilot.seatBreakdown` reports unique licensed-seat counts by `plan_type`
+  (`business`/`enterprise`/`unknown`), the same seat data `limits.includedCredits`
+  is derived from.
 
 Month-to-date reports are currently recalculated on each run, although the
 rolling report substantially reduces API calls. A `TODO` in the report-fetching

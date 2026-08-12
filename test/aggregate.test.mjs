@@ -5,6 +5,7 @@ import {
   aggregateCreditUsage,
   aggregateUserMetrics,
   attachUserCreditUsage,
+  computeIncludedCreditsPool,
   normalizeAiCreditBudgets,
 } from "../src/aggregate.mjs";
 import {
@@ -66,6 +67,78 @@ test("normalizeAiCreditBudgets excludes unrelated product budgets", () => {
       preventsFurtherUsage: true,
     },
   ]);
+});
+
+test("computeIncludedCreditsPool applies standard rates outside the promo window", () => {
+  const seats = [
+    { assignee: { id: 1 }, plan_type: "business" },
+    { assignee: { id: 2 }, plan_type: "business" },
+    { assignee: { id: 3 }, plan_type: "enterprise" },
+  ];
+
+  const before = computeIncludedCreditsPool(seats, { year: 2026, month: 5 });
+  const after = computeIncludedCreditsPool(seats, { year: 2026, month: 9 });
+
+  for (const pool of [before, after]) {
+    assert.equal(pool.promoActive, false);
+    assert.deepEqual(pool.seatBreakdown, { business: 2, enterprise: 1, unknown: 0 });
+    assert.equal(pool.includedCredits, 2 * 1900 + 3900);
+  }
+});
+
+test("computeIncludedCreditsPool applies promotional rates for 2026-06 through 2026-08", () => {
+  const seats = [
+    { assignee: { id: 1 }, plan_type: "business" },
+    { assignee: { id: 2 }, plan_type: "enterprise" },
+  ];
+
+  for (const month of [6, 7, 8]) {
+    const pool = computeIncludedCreditsPool(seats, { year: 2026, month });
+    assert.equal(pool.promoActive, true, `month ${month} should be promo`);
+    assert.equal(pool.includedCredits, 3000 + 7000);
+  }
+});
+
+test("computeIncludedCreditsPool dedupes seats by assignee id", () => {
+  const seats = [
+    { assignee: { id: 42 }, plan_type: "business", organization: null },
+    { assignee: { id: 42 }, plan_type: "business", organization: { login: "some-org" } },
+  ];
+
+  const pool = computeIncludedCreditsPool(seats, { year: 2026, month: 7 });
+
+  assert.equal(pool.uniqueSeatCount, 1);
+  assert.deepEqual(pool.seatBreakdown, { business: 1, enterprise: 0, unknown: 0 });
+  assert.equal(pool.includedCredits, 3000);
+  assert.deepEqual(pool.warnings, []);
+});
+
+test("computeIncludedCreditsPool excludes seats with no assignee or an unrecognized plan_type", () => {
+  const seats = [
+    { assignee: { id: 1 }, plan_type: "business" },
+    { assignee: null, plan_type: "business" },
+    { assignee: { id: 2 }, plan_type: "unknown" },
+  ];
+
+  const pool = computeIncludedCreditsPool(seats, { year: 2026, month: 7 });
+
+  assert.deepEqual(pool.seatBreakdown, { business: 1, enterprise: 0, unknown: 2 });
+  assert.equal(pool.includedCredits, 3000);
+  assert.equal(pool.warnings.length, 1);
+  assert.match(pool.warnings[0], /2 seat\(s\) have no assignee or an unrecognized plan_type/);
+});
+
+test("computeIncludedCreditsPool warns on conflicting plan_type for the same assignee", () => {
+  const seats = [
+    { assignee: { id: 7 }, plan_type: "business" },
+    { assignee: { id: 7 }, plan_type: "enterprise" },
+  ];
+
+  const pool = computeIncludedCreditsPool(seats, { year: 2026, month: 7 });
+
+  assert.deepEqual(pool.seatBreakdown, { business: 1, enterprise: 0, unknown: 0 });
+  assert.equal(pool.warnings.length, 1);
+  assert.match(pool.warnings[0], /Assignee 7 has conflicting plan_type/);
 });
 
 test("aggregateUserMetrics labels interaction and generation percentages", () => {
@@ -217,7 +290,10 @@ test("buildReport aggregates daily user records for the month", async () => {
       }],
     }),
     getBudgets: async () => [],
-    getCopilotSeats: async () => ({ totalSeats: 1, seats: [{}] }),
+    getCopilotSeats: async () => ({
+      totalSeats: 1,
+      seats: [{ assignee: { id: 101 }, plan_type: "business" }],
+    }),
     getMonthUserReports: async ({ days }) => ({
       coverage: {
         latest28Day: {
@@ -295,6 +371,18 @@ test("buildReport aggregates daily user records for the month", async () => {
   assert.equal(report.userMetrics.summary.billingBreakdown.complete, true);
   assert.equal(report.userMetrics.summary.billingBreakdown.unattributedGrossCredits, 5);
   assert.deepEqual(report.userMetrics.billingFailures, []);
+
+  // July 2026 falls inside the temporary promo window, so the single
+  // business seat is worth 3,000 credits rather than the standard 1,900.
+  assert.equal(report.limits.includedCredits, 3000);
+  assert.equal(report.limits.effectiveLimit, 3000);
+  assert.equal(report.limits.percentUsed, 0.8333);
+  assert.equal(report.limits.includedCreditsBasis.promoActive, true);
+  assert.deepEqual(report.copilot.seatBreakdown, {
+    business: 1,
+    enterprise: 0,
+    unknown: 0,
+  });
 });
 
 test("buildReport emits the same normalized enterprise shape", async () => {
@@ -323,4 +411,13 @@ test("buildReport emits the same normalized enterprise shape", async () => {
   assert.equal(report.copilot.totalSeats, 10);
   assert.equal(report.copilot.assignmentRecordCount, 2);
   assert.equal(report.userMetrics, null);
+
+  // Seats with no assignee can't be attributed to a plan, so they fall
+  // into `unknown` and contribute nothing to the included-credit total.
+  assert.equal(report.limits.includedCredits, 0);
+  assert.deepEqual(report.copilot.seatBreakdown, {
+    business: 0,
+    enterprise: 0,
+    unknown: 2,
+  });
 });

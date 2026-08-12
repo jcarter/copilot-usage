@@ -2,11 +2,81 @@ function number(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
 }
 
-function percentage(part, total) {
+export function percentage(part, total) {
   if (total === 0) {
     return 0;
   }
   return Math.round((part / total) * 1_000_000) / 10_000;
+}
+
+// GitHub does not expose the enterprise-wide included AI-credit pool via any
+// API. It grants a fixed monthly credit allotment per licensed seat, keyed by
+// plan_type, pooled across the billing entity. Rates below mirror GitHub's
+// published pricing and must be updated by hand if GitHub changes them.
+// Promo window source: docs.github.com "Usage-based billing for organizations
+// and enterprises" (temporary boost for existing customers, 2026-06-01
+// through 2026-09-01).
+const STANDARD_CREDITS_PER_SEAT = { business: 1900, enterprise: 3900 };
+const PROMO_CREDITS_PER_SEAT = { business: 3000, enterprise: 7000 };
+
+function isPromoPeriod({ year, month }) {
+  return year === 2026 && month >= 6 && month <= 8;
+}
+
+export function computeIncludedCreditsPool(seats = [], period) {
+  const ratesPerSeatPerMonth = isPromoPeriod(period)
+    ? PROMO_CREDITS_PER_SEAT
+    : STANDARD_CREDITS_PER_SEAT;
+
+  const warnings = [];
+  const planTypeByAssignee = new Map();
+  let unassignedSeats = 0;
+
+  for (const seat of seats) {
+    const assigneeId = seat?.assignee?.id;
+    if (assigneeId === undefined || assigneeId === null) {
+      unassignedSeats += 1;
+      continue;
+    }
+
+    const planType = seat.plan_type;
+    if (!planTypeByAssignee.has(assigneeId)) {
+      planTypeByAssignee.set(assigneeId, planType);
+    } else if (planTypeByAssignee.get(assigneeId) !== planType) {
+      warnings.push(
+        `Assignee ${assigneeId} has conflicting plan_type values across seat records (using "${planTypeByAssignee.get(assigneeId)}")`,
+      );
+    }
+  }
+
+  const seatBreakdown = { business: 0, enterprise: 0, unknown: 0 };
+  for (const planType of planTypeByAssignee.values()) {
+    if (planType === "business" || planType === "enterprise") {
+      seatBreakdown[planType] += 1;
+    } else {
+      seatBreakdown.unknown += 1;
+    }
+  }
+  seatBreakdown.unknown += unassignedSeats;
+
+  if (seatBreakdown.unknown > 0) {
+    warnings.push(
+      `${seatBreakdown.unknown} seat(s) have no assignee or an unrecognized plan_type and are excluded from the included-credit total`,
+    );
+  }
+
+  const includedCredits =
+    seatBreakdown.business * ratesPerSeatPerMonth.business +
+    seatBreakdown.enterprise * ratesPerSeatPerMonth.enterprise;
+
+  return {
+    includedCredits,
+    uniqueSeatCount: planTypeByAssignee.size + unassignedSeats,
+    seatBreakdown,
+    ratesPerSeatPerMonth,
+    promoActive: isPromoPeriod(period),
+    warnings,
+  };
 }
 
 export function aggregateCreditUsage(usageItems = []) {
