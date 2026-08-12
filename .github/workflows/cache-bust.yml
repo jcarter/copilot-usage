@@ -1,0 +1,47 @@
+name: Cache-bust page assets
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/styles.css"
+      - "docs/app.js"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cache-bust
+  cancel-in-progress: true
+
+jobs:
+  bust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # GitHub Pages' CDN and browsers both cache static assets, so a plain
+      # `git push` of styles.css/app.js can go unnoticed by visitors for a
+      # while. Stamping a content hash onto the <link>/<script> URLs in
+      # index.html gives each version a distinct URL, forcing a fresh fetch.
+      - name: Stamp content-hash query params onto asset links
+        run: |
+          set -euo pipefail
+          css_hash=$(sha256sum docs/styles.css | cut -c1-10)
+          js_hash=$(sha256sum docs/app.js | cut -c1-10)
+          sed -i -E "s#(styles\.css)(\?v=[a-f0-9]+)?\"#\1?v=${css_hash}\"#" docs/index.html
+          sed -i -E "s#(app\.js)(\?v=[a-f0-9]+)?\"#\1?v=${js_hash}\"#" docs/index.html
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          if git diff --cached --quiet; then
+            echo "Hashes unchanged, nothing to commit."
+            exit 0
+          fi
+          git commit -m "Cache-bust page assets"
+          git pull --rebase --autostash
+          git push

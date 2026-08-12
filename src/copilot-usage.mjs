@@ -2,6 +2,8 @@
 
 import {
   aggregateCreditUsage,
+  aggregateDailyCreditUsage,
+  aggregateDailyUserCreditUsage,
   aggregateUserMetrics,
   attachUserCreditUsage,
   computeIncludedCreditsPool,
@@ -113,10 +115,22 @@ export function getMonthReportDays({ year, month }, now = new Date()) {
 }
 
 export async function buildReport(options, client) {
+  const days = options.userReportDay
+    ? [options.userReportDay]
+    : getMonthReportDays(options, options.now);
+
   const requests = [
     client.getCreditUsage(options),
     client.getBudgets(options),
     client.getCopilotSeats(options),
+    days.length > 0
+      ? client.getDailyCreditUsageReports({
+          enterprise: options.enterprise,
+          year: options.year,
+          month: options.month,
+          days,
+        })
+      : Promise.resolve({ reports: [], failures: [] }),
   ];
 
   if (options.userReportDay) {
@@ -138,7 +152,6 @@ export async function buildReport(options, client) {
       },
     })));
   } else if (options.includeUsers) {
-    const days = getMonthReportDays(options, options.now);
     requests.push(client.getMonthUserReports({
       enterprise: options.enterprise,
       days,
@@ -152,8 +165,17 @@ export async function buildReport(options, client) {
     requests.push(Promise.resolve(null));
   }
 
-  const [usage, budgets, copilotDetails, userReport] = await Promise.all(requests);
+  const [usage, budgets, copilotDetails, dailyBilling, userReport] =
+    await Promise.all(requests);
   const credits = aggregateCreditUsage(usage?.usageItems);
+  const dailyUsage = {
+    days,
+    byModel: aggregateDailyCreditUsage(dailyBilling.reports),
+    byUser: userReport
+      ? aggregateDailyUserCreditUsage(userReport.records)
+      : null,
+    billingFailures: dailyBilling.failures,
+  };
   const aiCreditBudgets = normalizeAiCreditBudgets(budgets);
   const period = usage?.timePeriod ?? { year: options.year, month: options.month };
   const pool = computeIncludedCreditsPool(copilotDetails?.seats, period);
@@ -211,6 +233,7 @@ export async function buildReport(options, client) {
       assignmentRecordCount: copilotDetails?.seats?.length ?? null,
     },
     models: credits.models,
+    dailyUsage,
     userMetrics: userReport
       ? {
           period: {

@@ -115,6 +115,56 @@ test("getCreditUsage passes the user filter to the enterprise endpoint", async (
   assert.equal(requestedUrls[0].searchParams.get("month"), "7");
 });
 
+test("getCreditUsage passes the day filter to the enterprise endpoint", async () => {
+  const requestedUrls = [];
+  const client = new GitHubClient({
+    token: "test-token",
+    fetchImpl: async (url) => {
+      requestedUrls.push(url);
+      return new Response(JSON.stringify(creditUsageResponse()), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+
+  await client.getCreditUsage({
+    enterprise: "example-enterprise",
+    year: 2026,
+    month: 7,
+    day: 5,
+  });
+
+  assert.equal(requestedUrls[0].searchParams.get("day"), "5");
+});
+
+test("getDailyCreditUsageReports fetches one report per day and surfaces failures", async () => {
+  const client = Object.create(GitHubClient.prototype);
+  client.getCreditUsage = async ({ day }) => {
+    if (day === 2) {
+      throw new GitHubApiError("forbidden", { status: 403 });
+    }
+    return creditUsageResponse();
+  };
+
+  const result = await client.getDailyCreditUsageReports({
+    enterprise: "example-enterprise",
+    year: 2026,
+    month: 7,
+    days: ["2026-07-01", "2026-07-02", "2026-07-03"],
+  });
+
+  assert.deepEqual(result.reports.map((report) => report.day), [
+    "2026-07-01",
+    "2026-07-03",
+  ]);
+  assert.deepEqual(result.failures, [{
+    day: "2026-07-02",
+    status: 403,
+    message: "forbidden",
+  }]);
+});
+
 test("per-user credit reports preserve stable IDs and surface failures", async () => {
   const client = Object.create(GitHubClient.prototype);
   client.getCreditUsage = async ({ user }) => {

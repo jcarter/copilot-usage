@@ -124,6 +124,47 @@ export function aggregateCreditUsage(usageItems = []) {
   };
 }
 
+export function aggregateDailyCreditUsage(dailyReports = []) {
+  return dailyReports
+    .map(({ day, usage }) => ({
+      day,
+      ...aggregateCreditUsage(usage?.usageItems),
+    }))
+    .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+}
+
+// Sourced from the same per-day, per-user metrics records as
+// `aggregateUserMetrics`'s totals, so this is an analytics total
+// (`ai_credits_used`), not a billing total — see the README's
+// analytics-vs-billing note.
+export function aggregateDailyUserCreditUsage(records = []) {
+  const byDay = new Map();
+
+  for (const record of records) {
+    const day = record.day;
+    const usersForDay = byDay.get(day) ?? new Map();
+    const key = String(record.user_id);
+    const user = usersForDay.get(key) ?? {
+      userId: record.user_id,
+      userLogin: record.user_login,
+      aiCreditsUsed: 0,
+    };
+    user.userLogin = record.user_login;
+    user.aiCreditsUsed += number(record.ai_credits_used);
+    usersForDay.set(key, user);
+    byDay.set(day, usersForDay);
+  }
+
+  return [...byDay.entries()]
+    .map(([day, usersForDay]) => ({
+      day,
+      users: [...usersForDay.values()].sort(
+        (a, b) => b.aiCreditsUsed - a.aiCreditsUsed,
+      ),
+    }))
+    .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+}
+
 export function normalizeAiCreditBudgets(budgets = []) {
   return budgets
     .filter((budget) => {

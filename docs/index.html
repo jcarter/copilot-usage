@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI usage</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="page">
+  <header class="page-header">
+    <h1>AI usage</h1>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false">
+      <svg class="icon icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v3M12 18.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2.5 12h3M18.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+      <svg class="icon icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z"/></svg>
+    </button>
+  </header>
+
+  <div class="controls-row">
+    <div class="search">
+      <svg class="search-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.68 11.74a6 6 0 1 1 1.06-1.06l3.3 3.3a.75.75 0 1 1-1.06 1.06ZM11.5 7a4.5 4.5 0 1 0-9 0 4.5 4.5 0 0 0 9 0Z"/></svg>
+      <input id="filter-input" type="text" placeholder="Filter by model or user" autocomplete="off" />
+    </div>
+    <label class="groupby">
+      <span>Group by:</span>
+      <select id="groupby-select">
+        <option value="models">Models</option>
+        <option value="users">Users</option>
+      </select>
+    </label>
+  </div>
+
+  <section class="card credits-card">
+    <h2>Credits</h2>
+    <div class="credits-value">
+      <span id="credits-used">&mdash;</span><span class="credits-sep"> / </span><span id="credits-total">&mdash;</span>
+      <span class="credits-unit">AI credits</span>
+    </div>
+    <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+    <p id="credits-caption" class="caption"></p>
+  </section>
+
+  <section class="card chart-card">
+    <div class="card-heading">
+      <div>
+        <h2 id="chart-title">Usage grouped by models</h2>
+        <p id="chart-subtitle" class="caption"></p>
+      </div>
+      <span class="granularity-pill">Granularity: Daily</span>
+    </div>
+    <div id="chart-legend" class="chart-legend" role="group" aria-label="Chart series"></div>
+    <div class="chart-wrap">
+      <canvas id="usage-chart"></canvas>
+      <p id="chart-empty" class="empty-state" hidden>No usage recorded yet this period.</p>
+    </div>
+  </section>
+
+  <section class="card breakdown-card">
+    <h2>Usage breakdown</h2>
+    <p id="breakdown-subtitle" class="caption"></p>
+    <div class="table-wrap">
+      <table id="breakdown-table">
+        <thead><tr id="breakdown-head"></tr></thead>
+        <tbody id="breakdown-body"></tbody>
+      </table>
+      <p id="breakdown-empty" class="empty-state" hidden>No rows match your filter.</p>
+    </div>
+  </section>
+
+  <p id="load-error" class="load-error" hidden></p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

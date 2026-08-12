@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   aggregateCreditUsage,
+  aggregateDailyCreditUsage,
+  aggregateDailyUserCreditUsage,
   aggregateUserMetrics,
   attachUserCreditUsage,
   computeIncludedCreditsPool,
@@ -39,6 +41,60 @@ test("aggregateCreditUsage totals credits and computes model percentages", () =>
   assert.equal(result.models[0].model, "Model A");
   assert.equal(result.models[0].percentageOfGrossCredits, 75);
   assert.equal(result.models[1].percentageOfGrossCredits, 25);
+});
+
+test("aggregateDailyCreditUsage totals credits per day and sorts by day", () => {
+  const result = aggregateDailyCreditUsage([
+    {
+      day: "2026-07-02",
+      usage: { usageItems: [{
+        model: "Model A",
+        grossQuantity: 10,
+        discountQuantity: 10,
+        netQuantity: 0,
+        grossAmount: 0.1,
+        netAmount: 0,
+      }] },
+    },
+    {
+      day: "2026-07-01",
+      usage: { usageItems: [{
+        model: "Model A",
+        grossQuantity: 5,
+        discountQuantity: 5,
+        netQuantity: 0,
+        grossAmount: 0.05,
+        netAmount: 0,
+      }] },
+    },
+  ]);
+
+  assert.deepEqual(result.map((entry) => entry.day), [
+    "2026-07-01",
+    "2026-07-02",
+  ]);
+  assert.equal(result[0].grossUsed, 5);
+  assert.equal(result[1].grossUsed, 10);
+  assert.equal(result[1].models[0].model, "Model A");
+});
+
+test("aggregateDailyUserCreditUsage groups analytics credits by day then user", () => {
+  const result = aggregateDailyUserCreditUsage([
+    { day: "2026-07-02", user_id: 1, user_login: "octocat", ai_credits_used: 4 },
+    { day: "2026-07-01", user_id: 1, user_login: "octocat", ai_credits_used: 2 },
+    { day: "2026-07-01", user_id: 2, user_login: "hubot", ai_credits_used: 6 },
+  ]);
+
+  assert.deepEqual(result.map((entry) => entry.day), [
+    "2026-07-01",
+    "2026-07-02",
+  ]);
+  assert.deepEqual(
+    result[0].users.map((user) => user.userLogin),
+    ["hubot", "octocat"],
+  );
+  assert.equal(result[0].users[0].aiCreditsUsed, 6);
+  assert.equal(result[1].users[0].aiCreditsUsed, 4);
 });
 
 test("normalizeAiCreditBudgets excludes unrelated product budgets", () => {
@@ -294,6 +350,22 @@ test("buildReport aggregates daily user records for the month", async () => {
       totalSeats: 1,
       seats: [{ assignee: { id: 101 }, plan_type: "business" }],
     }),
+    getDailyCreditUsageReports: async ({ days }) => ({
+      reports: days.map((day) => ({
+        day,
+        usage: {
+          usageItems: [{
+            model: "Model A",
+            grossQuantity: day === "2026-07-01" ? 10 : 15,
+            discountQuantity: day === "2026-07-01" ? 10 : 15,
+            netQuantity: 0,
+            grossAmount: day === "2026-07-01" ? 0.1 : 0.15,
+            netAmount: 0,
+          }],
+        },
+      })),
+      failures: [],
+    }),
     getMonthUserReports: async ({ days }) => ({
       coverage: {
         latest28Day: {
@@ -372,6 +444,21 @@ test("buildReport aggregates daily user records for the month", async () => {
   assert.equal(report.userMetrics.summary.billingBreakdown.unattributedGrossCredits, 5);
   assert.deepEqual(report.userMetrics.billingFailures, []);
 
+  assert.deepEqual(report.dailyUsage.days, ["2026-07-01", "2026-07-02"]);
+  assert.deepEqual(
+    report.dailyUsage.byModel.map((entry) => entry.day),
+    ["2026-07-01", "2026-07-02"],
+  );
+  assert.equal(report.dailyUsage.byModel[0].grossUsed, 10);
+  assert.equal(report.dailyUsage.byModel[1].grossUsed, 15);
+  assert.deepEqual(
+    report.dailyUsage.byUser.map((entry) => entry.day),
+    ["2026-07-01", "2026-07-02"],
+  );
+  assert.equal(report.dailyUsage.byUser[0].users[0].aiCreditsUsed, 10);
+  assert.equal(report.dailyUsage.byUser[1].users[0].aiCreditsUsed, 15);
+  assert.deepEqual(report.dailyUsage.billingFailures, []);
+
   // July 2026 falls inside the temporary promo window, so the single
   // business seat is worth 3,000 credits rather than the standard 1,900.
   assert.equal(report.limits.includedCredits, 3000);
@@ -393,6 +480,10 @@ test("buildReport emits the same normalized enterprise shape", async () => {
     }),
     getBudgets: async () => [],
     getCopilotSeats: async () => ({ totalSeats: 10, seats: [{}, {}] }),
+    getDailyCreditUsageReports: async ({ days }) => ({
+      reports: days.map((day) => ({ day, usage: { usageItems: [] } })),
+      failures: [],
+    }),
   };
   const report = await buildReport(
     {
@@ -400,6 +491,7 @@ test("buildReport emits the same normalized enterprise shape", async () => {
       year: 2026,
       month: 7,
       includeUsers: false,
+      now: new Date("2026-07-03T12:00:00Z"),
     },
     client,
   );

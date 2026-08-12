@@ -1,0 +1,44 @@
+name: Publish usage data
+
+on:
+  schedule:
+    # 7am CST (fixed UTC-6, so this stays 7am CST year-round rather than
+    # drifting to 7am CDT during daylight saving).
+    - cron: "0 13 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-usage
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build usage report
+        env:
+          GITHUB_TOKEN: ${{ secrets.COPILOT_USAGE_TOKEN }}
+          ENTERPRISE_SLUG: ${{ vars.ENTERPRISE_SLUG }}
+        run: |
+          node src/copilot-usage.mjs --enterprise "$ENTERPRISE_SLUG" --pretty > docs/data.json
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data.json
+          if git diff --cached --quiet; then
+            echo "No changes to publish."
+            exit 0
+          fi
+          git commit -m "Update usage data"
+          git push

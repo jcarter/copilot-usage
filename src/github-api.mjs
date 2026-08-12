@@ -186,11 +186,14 @@ export class GitHubClient {
     return response.json();
   }
 
-  async getCreditUsage({ enterprise, year, month, user }) {
+  async getCreditUsage({ enterprise, year, month, day, user }) {
     const query = new URLSearchParams({
       year: String(year),
       month: String(month),
     });
+    if (day) {
+      query.set("day", String(day));
+    }
     if (user) {
       query.set("user", user);
     }
@@ -198,6 +201,54 @@ export class GitHubClient {
       `/enterprises/${encodeURIComponent(enterprise)}/settings/billing/ai_credit/usage?${query}`,
     );
     return validateAiCreditUsageReport(report);
+  }
+
+  async getDailyCreditUsageReports({
+    enterprise,
+    year,
+    month,
+    days,
+    concurrency = 5,
+  }) {
+    const outcomes = new Array(days.length);
+    let nextIndex = 0;
+
+    const worker = async () => {
+      while (nextIndex < days.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        const day = days[index];
+
+        try {
+          const usage = await this.getCreditUsage({
+            enterprise,
+            year,
+            month,
+            day: Number(day.slice(-2)),
+          });
+          outcomes[index] = { ok: true, day, usage };
+        } catch (error) {
+          outcomes[index] = {
+            ok: false,
+            day,
+            status: Number.isInteger(error?.status) ? error.status : null,
+            message: error?.message || String(error),
+          };
+        }
+      }
+    };
+
+    const workerCount = Math.min(Math.max(1, concurrency), days.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+    return {
+      reports: outcomes
+        .filter((outcome) => outcome.ok)
+        .map(({ ok, ...outcome }) => outcome),
+      failures: outcomes
+        .filter((outcome) => !outcome.ok)
+        .map(({ ok, ...outcome }) => outcome),
+    };
   }
 
   async getUserCreditUsageReports({
